@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Portfolio Analyst — Business Interface</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: #f7f7f8; color: #222;
+  }
+  header {
+    background: #1a1a2e; color: #fff; padding: 16px 24px; font-size: 18px; font-weight: 600;
+  }
+  #layout { display: flex; height: calc(100vh - 56px); }
+  #list-panel { width: 380px; border-right: 1px solid #ddd; overflow-y: auto; background: #fff; }
+  .convo-row {
+    padding: 14px 18px; border-bottom: 1px solid #f0f0f0; cursor: pointer;
+  }
+  .convo-row:hover { background: #f5f5f5; }
+  .convo-row.active { background: #eef; }
+  .convo-row .top { display: flex; justify-content: space-between; font-weight: 600; }
+  .convo-row .meta { font-size: 12.5px; color: #888; margin-top: 2px; }
+  .flag-badge {
+    display: inline-block; background: #d9534f; color: #fff; font-size: 11px;
+    padding: 2px 6px; border-radius: 4px; margin-left: 6px;
+  }
+  #detail-panel { flex: 1; overflow-y: auto; padding: 24px; }
+  .timeline-item { margin-bottom: 12px; padding: 12px 14px; border-radius: 8px; }
+  .timeline-item.message.user { background: #eef4ff; }
+  .timeline-item.message.assistant { background: #f2f2f2; }
+  .timeline-item.tool_call { background: #fff8e6; border: 1px dashed #e0c060; font-family: ui-monospace, monospace; font-size: 12.5px; }
+  .timeline-item .label { font-size: 11px; text-transform: uppercase; color: #888; margin-bottom: 4px; letter-spacing: .04em; }
+  .timeline-item .status-error { color: #a00; font-weight: 600; }
+  #placeholder { color: #999; padding: 40px; text-align: center; }
+  .filter-bar { padding: 10px 18px; border-bottom: 1px solid #eee; font-size: 13px; }
+  .filter-bar label { cursor: pointer; }
+</style>
+</head>
+<body>
+<header>Portfolio Analyst — Business Interface</header>
+<div id="layout">
+  <div id="list-panel">
+    <div class="filter-bar">
+      <label><input type="checkbox" id="flagged-only" /> Flagged only</label>
+    </div>
+    <div id="convo-list"></div>
+  </div>
+  <div id="detail-panel"><div id="placeholder">Select a conversation to inspect it</div></div>
+</div>
+
+<script>
+const API_BASE = "";
+let allConvos = [];
+
+function fmtTime(iso) {
+  if (!iso) return "";
+  return new Date(iso).toLocaleString();
+}
+
+async function loadConvos() {
+  const res = await fetch(`${API_BASE}/admin/conversations`);
+  allConvos = await res.json();
+  renderList();
+}
+
+function renderList() {
+  const flaggedOnly = document.getElementById("flagged-only").checked;
+  const list = document.getElementById("convo-list");
+  list.innerHTML = "";
+  allConvos
+    .filter(c => !flaggedOnly || c.flagged)
+    .forEach(c => {
+      const div = document.createElement("div");
+      div.className = "convo-row";
+      div.dataset.id = c.conversation_id;
+      div.innerHTML = `
+        <div class="top">
+          <span>${c.user_name}${c.flagged ? '<span class="flag-badge">FLAGGED</span>' : ""}</span>
+          <span>#${c.conversation_id}</span>
+        </div>
+        <div class="meta">${c.message_count} messages &middot; last activity ${fmtTime(c.last_activity)}</div>
+      `;
+      div.onclick = () => selectConvo(c.conversation_id, div);
+      list.appendChild(div);
+    });
+}
+
+async function selectConvo(id, rowEl) {
+  document.querySelectorAll(".convo-row").forEach(r => r.classList.remove("active"));
+  rowEl.classList.add("active");
+
+  const res = await fetch(`${API_BASE}/admin/conversations/${id}`);
+  const data = await res.json();
+  const panel = document.getElementById("detail-panel");
+
+  let flagHtml = "";
+  if (data.flagged) {
+    flagHtml = `<div style="background:#fdecea;border:1px solid #d9534f;padding:10px 14px;border-radius:6px;margin-bottom:16px;">
+      <strong>Flagged:</strong> ${data.flag_reason || "no reason recorded"}
+    </div>`;
+  }
+
+  const timelineHtml = data.timeline.map(item => {
+    if (item.type === "message") {
+      const latencyLabel = item.latency_ms != null ? ` &middot; ${item.latency_ms}ms` : "";
+      return `<div class="timeline-item message ${item.role}">
+        <div class="label">${item.role} &middot; ${fmtTime(item.at)}${latencyLabel}</div>
+        ${item.content}
+      </div>`;
+    } else {
+      const statusClass = item.status === "error" ? "status-error" : "";
+      return `<div class="timeline-item tool_call">
+        <div class="label">tool call: ${item.tool_name} &middot; ${item.latency_ms}ms &middot;
+          <span class="${statusClass}">${item.status}</span> &middot; ${fmtTime(item.at)}</div>
+        <div><strong>input:</strong> ${item.input}</div>
+        <div><strong>output:</strong> ${item.output}</div>
+      </div>`;
+    }
+  }).join("");
+
+  panel.innerHTML = `
+    <h2 style="margin-top:0;">${data.user_name} — Conversation #${data.conversation_id}</h2>
+    ${flagHtml}
+    ${timelineHtml || '<p style="color:#999;">No messages yet.</p>'}
+  `;
+}
+
+document.getElementById("flagged-only").addEventListener("change", renderList);
+loadConvos();
+setInterval(loadConvos, 10000); // light polling so new conversations show up
+</script>
+</body>
+</html>
